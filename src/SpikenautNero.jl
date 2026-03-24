@@ -10,6 +10,12 @@ Computes per-tick relevance scores across SNN lobes using:
 
 Cross-lobe inhibition via a static directed graph, followed by
 softmax normalisation so all scores sum to 1.0.
+
+## Provenance
+
+Extracted from Eagle-Lander, the author's own private neuromorphic GPU supervisor
+repository (closed-source). NERO orchestrated a 4-lobe 65,536-neuron LSM ensemble
+in production before being open-sourced as a standalone Julia package.
 """
 module SpikenautNero
 
