@@ -33,16 +33,16 @@ const NERO_EMA_DECAY   = 0.05f0   # EMA smoothing factor (5% new estimate per ti
 const NERO_MIN_SCORE   = 0.01f0   # Clamp: never let any lobe drop to zero relevance
 const NERO_EPSILON     = 1.0f-6   # Numerical stability floor for normalisation
 
-# Default lobe names (4-lobe ensemble: Scalper / Day / Swing / Macro)
-const NERO_DEFAULT_LOBE_NAMES = ["Scalper", "Day", "Swing", "Macro"]
+# Default lobe names (4-lobe ensemble for LLM routing)
+const NERO_DEFAULT_LOBE_NAMES = ["Attention", "FFN", "Memory", "Output"]
 
-# Cross-lobe inhibition: adjacency weight from fast→slow lobes.
-# Layout: NERO_INHIBIT[from_lobe, to_lobe].
+# Cross-lobe inhibition: lateral inhibition for winner-take-all routing.
+# Layout: NERO_INHIBIT[from_lobe, to_lobe]. Higher values = stronger suppression.
 const NERO_INHIBIT = Float32[
-    0.0   0.08  0.05  0.02;   # Scalper → {Day, Swing, Macro}
-    0.04  0.0   0.06  0.03;   # Day     → {Scalper, Swing, Macro}
-    0.02  0.03  0.0   0.05;   # Swing   → {Scalper, Day, Macro}
-    0.01  0.02  0.03  0.0     # Macro   → {Scalper, Day, Swing}
+    0.0   0.08  0.05  0.02;   # Attention → {FFN, Memory, Output}
+    0.04  0.0   0.06  0.03;   # FFN      → {Attention, Memory, Output}
+    0.02  0.03  0.0   0.05;   # Memory   → {Attention, FFN, Output}
+    0.01  0.02  0.03  0.0     # Output   → {Attention, FFN, Memory}
 ]
 
 # ── NERO State ────────────────────────────────────────────────────────────────
@@ -59,10 +59,10 @@ Fields:
   n_out            — readout width per lobe (default 16)
   lobe_names       — human-readable lobe labels
   adjacency_matrix — n_lobes × n_lobes directed adjacency weights
-  relevance        — current relevance vector (sums to 1.0)
+  routing_weights  — current routing weights vector (sums to 1.0)
   readout_ema      — per-lobe EMA of the readout (n_lobes × n_out)
   spike_density    — current spike density per lobe
-  prev_relevance   — previous tick relevance (for momentum)
+  prev_routing_weights — previous tick routing weights (for momentum)
   surprise         — manifold surprise score per lobe
   scratch          — reusable scratch buffer (n_out elements)
   tick_count       — global tick counter
@@ -72,10 +72,10 @@ mutable struct NeroOrchestrator
     n_out::Int
     lobe_names::Vector{String}
     adjacency_matrix::Matrix{Float32}
-    relevance::Vector{Float32}
+    routing_weights::Vector{Float32}
     readout_ema::Matrix{Float32}
     spike_density::Vector{Float32}
-    prev_relevance::Vector{Float32}
+    prev_routing_weights::Vector{Float32}
     surprise::Vector{Float32}
     scratch::Vector{Float32}
     tick_count::Int64
@@ -101,7 +101,7 @@ function NeroOrchestrator(;
         n_out,
         lobe_names,
         adjacency_matrix,
-        fill(1.0f0 / n_lobes, n_lobes),    # equal relevance at start
+        fill(1.0f0 / n_lobes, n_lobes),    # equal routing weights at start
         zeros(Float32, n_lobes, n_out),
         zeros(Float32, n_lobes),
         fill(1.0f0 / n_lobes, n_lobes),
@@ -119,13 +119,13 @@ end
 Compute NERO relevance scores for all lobes from the current lobe states.
 `lobes` is a `Vector{LobeState}` — one per lobe.
 
-The result is stored in `nero.relevance` (n_lobes × Float32).
+The result is stored in `nero.routing_weights` (n_lobes × Float32).
 
 Algorithm per lobe i:
   1. spike_density[i]  = lobes[i].last_spike_rate
   2. readout_ema[i,:]  = (1-EMA_DECAY)×old_ema + EMA_DECAY×lobes[i].output
   3. surprise[i]       = norm(readout_delta) / (norm(readout_ema) + ε)
-  4. momentum[i]       = |relevance[i] - prev_relevance[i]|
+  4. momentum[i]       = |routing_weights[i] - prev_routing_weights[i]|
   5. raw[i]            = α×density + β×surprise + γ×momentum
 
 Cross-lobe inhibition:
@@ -158,7 +158,7 @@ function update_relevance!(nero::NeroOrchestrator, lobes::Vector{LobeState})
         nero.surprise[i] = delta_norm / ema_norm
 
         # 4. Momentum
-        momentum = abs(nero.relevance[i] - nero.prev_relevance[i])
+        momentum = abs(nero.routing_weights[i] - nero.prev_routing_weights[i])
 
         # 5. Raw score
         raw[i] = NERO_ALPHA * spike_density +
@@ -167,7 +167,7 @@ function update_relevance!(nero::NeroOrchestrator, lobes::Vector{LobeState})
     end
 
     # ── Stage 4: cross-lobe graph inhibition ──────────────────────────────
-    inhibited = nero.relevance
+    inhibited = nero.routing_weights
     for dst in 1:n
         inh_sum = 0.0f0
         for src in 1:n
@@ -194,7 +194,7 @@ function update_relevance!(nero::NeroOrchestrator, lobes::Vector{LobeState})
     end
     inhibited ./= (sum(inhibited) + NERO_EPSILON)
 
-    copyto!(nero.prev_relevance, nero.relevance)
+    copyto!(nero.prev_routing_weights, nero.routing_weights)
     return nothing
 end
 
@@ -206,9 +206,9 @@ end
 One-line NERO state summary for logging.
 """
 function nero_diagnostics(nero::NeroOrchestrator)::String
-    lobe_strs = [@sprintf("%s=%.2f", nero.lobe_names[i], nero.relevance[i])
+    lobe_strs = [@sprintf("%s=%.2f", nero.lobe_names[i], nero.routing_weights[i])
                  for i in 1:nero.n_lobes]
-    dominant = argmax(nero.relevance)
+    dominant = argmax(nero.routing_weights)
     surprise_str = join([@sprintf("%.3f", nero.surprise[i]) for i in 1:nero.n_lobes], ",")
     @sprintf("[NERO tick=%d] %s | dominant=%s | surprise=[%s]",
         nero.tick_count,
