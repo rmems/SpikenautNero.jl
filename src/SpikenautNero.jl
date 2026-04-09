@@ -19,7 +19,7 @@ in production before being open-sourced as a standalone Julia package.
 """
 module SpikenautNero
 
-export LobeState, NeroOrchestrator, update_relevance!, nero_diagnostics
+export LobeState, NeroOrchestrator, update_relevance!, nero_diagnostics, adapt_leak!
 
 include("lobe.jl")
 include("nero_orchestrator.jl")

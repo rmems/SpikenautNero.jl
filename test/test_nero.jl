@@ -7,8 +7,8 @@ using SpikenautNero
         nero = NeroOrchestrator()
         @test nero.n_lobes == 4
         @test nero.n_out == 16
-        @test length(nero.relevance) == 4
-        @test isapprox(sum(nero.relevance), 1.0f0, atol=1e-5)
+        @test length(nero.routing_weights) == 4
+        @test isapprox(sum(nero.routing_weights), 1.0f0, atol=1e-5)
         @test nero.tick_count == 0
     end
 
@@ -16,7 +16,7 @@ using SpikenautNero
         nero = NeroOrchestrator()
         lobes = [LobeState(rand(Float32), rand(Float32, 16)) for _ in 1:4]
         update_relevance!(nero, lobes)
-        @test isapprox(sum(nero.relevance), 1.0f0, atol=1e-4)
+        @test isapprox(sum(nero.routing_weights), 1.0f0, atol=1e-4)
         @test nero.tick_count == 1
     end
 
@@ -26,7 +26,7 @@ using SpikenautNero
             lobes = [LobeState(rand(Float32), rand(Float32, 16)) for _ in 1:4]
             update_relevance!(nero, lobes)
         end
-        for r in nero.relevance
+        for r in nero.routing_weights
             @test r >= SpikenautNero.NERO_MIN_SCORE
         end
     end
@@ -43,9 +43,9 @@ using SpikenautNero
             ]
             update_relevance!(nero, lobes)
         end
-        @test nero.relevance[1] > nero.relevance[2]
-        @test nero.relevance[1] > nero.relevance[3]
-        @test nero.relevance[1] > nero.relevance[4]
+        @test nero.routing_weights[1] > nero.routing_weights[2]
+        @test nero.routing_weights[1] > nero.routing_weights[3]
+        @test nero.routing_weights[1] > nero.routing_weights[4]
     end
 
     @testset "tick counter increments" begin
@@ -71,8 +71,8 @@ using SpikenautNero
         nero = NeroOrchestrator(n_lobes=3, n_out=8, lobe_names=["A","B","C"])
         lobes = [LobeState(rand(Float32), rand(Float32, 8)) for _ in 1:3]
         update_relevance!(nero, lobes)
-        @test length(nero.relevance) == 3
-        @test isapprox(sum(nero.relevance), 1.0f0, atol=1e-4)
+        @test length(nero.routing_weights) == 3
+        @test isapprox(sum(nero.routing_weights), 1.0f0, atol=1e-4)
     end
 
 end
